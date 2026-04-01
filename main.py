@@ -5,36 +5,32 @@ import io
 import re
 
 def clean_placement_data(components):
-    """"""
+    """Filtra los componentes que contienen 'FIDU' en su nombre."""
     return [c for c in components if "FIDU" not in c['name'].upper()]
 
 def parse_txt_coordinates(content):
     """
-    Intenta parsear un archivo TXT de coordenadas. 
-    Busca patrones comunes: Designator X Y Angle Part
+    Parsear un archivo TXT de coordenadas. 
+    Espera: Designador, X, Y, Ángulo, Parte
     """
     components = []
     lines = content.decode('utf-8').splitlines()
     for line in lines:
-        # Dividir por espacios, comas o tabs
         parts = re.split(r'\s+|,\s*', line.strip())
         if len(parts) >= 4:
-            # Intento básico de identificar si la línea tiene coordenadas numéricas
             try:
-                # Ejemplo esperado: C1 10.5 20.2 90 ComponentName
                 name = parts[0]
                 x = parts[1]
                 y = parts[2]
                 rot = parts[3]
                 part = parts[4] if len(parts) > 4 else "UNKNOWN"
                 
-                # Validar que X e Y sean números
                 float(x)
                 float(y)
                 
                 components.append({'name': name, 'x': x, 'y': y, 'rot': rot, 'part': part})
             except ValueError:
-                continue # Saltar líneas de encabezado
+                continue 
     return components
 
 def generate_iss_xml(components, board_info):
@@ -71,9 +67,9 @@ def generate_txt_report(components, board_info):
     output.write(f"REPORTE DE MONTAJE - JANET\n")
     output.write(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
     output.write(f"Placa: {board_info.get('name', 'N/A')}\n")
-    output.write("-" * 50 + "\n")
+    output.write("-" * 60 + "\n")
     output.write(f"{'Designator':<15} {'X':<10} {'Y':<10} {'Rot':<10} {'Part':<20}\n")
-    output.write("-" * 50 + "\n")
+    output.write("-" * 60 + "\n")
     for c in components:
         output.write(f"{c['name']:<15} {c['x']:<10} {c['y']:<10} {c['rot']:<10} {c['part']:<20}\n")
     return output.getvalue()
@@ -81,7 +77,6 @@ def generate_txt_report(components, board_info):
 # --- Interfaz Streamlit ---
 st.set_page_config(page_title="Convertidor Universal Dialight", layout="wide")
 st.title("⚙️ Convertidor Universal (KYPcb / TXT) a Janet ISS")
-st.info("Este programa filtra automáticamente los componentes 'FIDU' y genera archivos listos para producción.")
 
 uploaded_file = st.file_uploader("Sube tu archivo (.KYPcb o .txt)", type=["KYPcb", "txt", "xml"])
 
@@ -108,13 +103,12 @@ if uploaded_file:
                     'part': c.get('part', 'UNKNOWN')
                 })
         else:
-            # Procesar como TXT
             components = parse_txt_coordinates(content)
 
-        # APLICAR FILTRO FIDU
+        # Aplicar filtro de Fiduciales internamente
         final_components = clean_placement_data(components)
         
-        st.success(f"Procesados {len(final_components)} componentes (Se eliminaron {len(components) - len(final_components)} Fiduciales).")
+        st.success(f"Procesados {len(final_components)} componentes.")
 
         col1, col2 = st.columns(2)
         
@@ -127,12 +121,12 @@ if uploaded_file:
                 st.download_button("📥 Descargar Archivo .ISS", data=iss_file, 
                                    file_name=uploaded_file.name.rsplit('.', 1)[0] + ".iss")
                 
-                st.download_button("📥 Descargar Reporte .TXT (Para Imprimir)", data=report_file, 
-                                   file_name="Reporte_Montaje_" + uploaded_file.name.rsplit('.', 1)[0] + ".txt")
+                st.download_button("📥 Descargar Reporte .TXT", data=report_file, 
+                                   file_name="Reporte_" + uploaded_file.name.rsplit('.', 1)[0] + ".txt")
 
         with col2:
             st.subheader("Vista Previa")
-            st.dataframe(final_components, height=300)
+            st.dataframe(final_components, height=400)
 
     except Exception as e:
         st.error(f"Error al procesar el archivo: {e}")
