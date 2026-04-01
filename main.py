@@ -5,7 +5,7 @@ import io
 import re
 
 def clean_placement_data(components):
-    """Filtra los componentes que contienen 'FIDU' en su nombre."""
+    """"""
     return [c for c in components if "FIDU" not in c['name'].upper()]
 
 def parse_txt_coordinates(content):
