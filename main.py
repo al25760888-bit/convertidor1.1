@@ -2,97 +2,137 @@ import streamlit as st
 import xml.etree.ElementTree as ET
 import datetime
 import io
+import re
 
-def convert_kypcb_to_iss(xml_content):
-    # Parsear el contenido del archivo subido
-    root = ET.fromstring(xml_content)
+def clean_placement_data(components):
+    """Filtra los componentes que contienen 'FIDU' en su nombre."""
+    return [c for c in components if "FIDU" not in c['name'].upper()]
 
-    # Extraer datos básicos de la placa (KohYoung)
-    board_node = root.find('board')
-    board_name = board_node.get('name', 'Converted_Board')
-    width = board_node.get('w', '0')
-    height = board_node.get('h', '0')
+def parse_txt_coordinates(content):
+    """
+    Intenta parsear un archivo TXT de coordenadas. 
+    Busca patrones comunes: Designator X Y Angle Part
+    """
+    components = []
+    lines = content.decode('utf-8').splitlines()
+    for line in lines:
+        # Dividir por espacios, comas o tabs
+        parts = re.split(r'\s+|,\s*', line.strip())
+        if len(parts) >= 4:
+            # Intento básico de identificar si la línea tiene coordenadas numéricas
+            try:
+                # Ejemplo esperado: C1 10.5 20.2 90 ComponentName
+                name = parts[0]
+                x = parts[1]
+                y = parts[2]
+                rot = parts[3]
+                part = parts[4] if len(parts) > 4 else "UNKNOWN"
+                
+                # Validar que X e Y sean números
+                float(x)
+                float(y)
+                
+                components.append({'name': name, 'x': x, 'y': y, 'rot': rot, 'part': part})
+            except ValueError:
+                continue # Saltar líneas de encabezado
+    return components
 
-    # Crear la estructura raíz del archivo .iss (Juki ISS)
+def generate_iss_xml(components, board_info):
     production_program = ET.Element("productionProgram")
-    
-    # Cabecera
     header = ET.SubElement(production_program, "headerData")
     ET.SubElement(header, "targetMachine").text = "ISS"
     ET.SubElement(header, "lastEdit").text = datetime.datetime.now().isoformat()
     
-    # Cuerpo del programa
     core = ET.SubElement(production_program, "core")
-    
-    # Datos del panel
     pwb_data = ET.SubElement(core, "pwbData")
-    ET.SubElement(pwb_data, "pwbId").text = board_name
+    ET.SubElement(pwb_data, "pwbId").text = board_info.get('name', 'Board')
     pwb_config = ET.SubElement(pwb_data, "pwbConfiguration")
-    ET.SubElement(pwb_config, "outline", x=width, y=height)
+    ET.SubElement(pwb_config, "outline", x=board_info.get('w', '0'), y=board_info.get('h', '0'))
 
-    # Datos de colocación (Placement)
     placement_data = ET.SubElement(core, "placementData")
-    
-    # Buscar todos los componentes en el KYPcb
-    components = root.findall('.//component')
-    
     for index, comp in enumerate(components):
         placement = ET.SubElement(placement_data, "placement", index=str(index))
-        
-        designator = comp.get('name', f'COMP{index}')
-        part_name = comp.get('part', 'UNKNOWN')
-        pos_x = comp.get('x', '0')
-        pos_y = comp.get('y', '0')
-        angle = comp.get('rot', '0')
-
-        ET.SubElement(placement, "placementId").text = designator
+        ET.SubElement(placement, "placementId").text = comp['name']
         ET.SubElement(placement, "baseCircuitId").text = "A"
-        ET.SubElement(placement, "componentName").text = part_name
-        ET.SubElement(placement, "placementPosition", x=pos_x, y=pos_y, rangeOver="False")
-        ET.SubElement(placement, "placementAngle", angle=angle)
-        
+        ET.SubElement(placement, "componentName").text = comp['part']
+        ET.SubElement(placement, "placementPosition", x=comp['x'], y=comp['y'], rangeOver="False")
+        ET.SubElement(placement, "placementAngle", angle=comp['rot'])
         attr = ET.SubElement(placement, "attribute")
         ET.SubElement(attr, "skip", placement="NO", adhesive="NO")
 
-    # Generar el XML final
     output_tree = ET.ElementTree(production_program)
     ET.indent(output_tree, space="  ", level=0)
-    
-    # Guardar en un buffer de memoria para la descarga
     buffer = io.BytesIO()
     output_tree.write(buffer, encoding="utf-8", xml_declaration=True)
     return buffer.getvalue()
 
-# --- Interfaz de Streamlit ---
-st.set_page_config(page_title="Convertidor KYPcb a ISS", page_icon="⚙️")
+def generate_txt_report(components, board_info):
+    output = io.StringIO()
+    output.write(f"REPORTE DE MONTAJE - JANET\n")
+    output.write(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    output.write(f"Placa: {board_info.get('name', 'N/A')}\n")
+    output.write("-" * 50 + "\n")
+    output.write(f"{'Designator':<15} {'X':<10} {'Y':<10} {'Rot':<10} {'Part':<20}\n")
+    output.write("-" * 50 + "\n")
+    for c in components:
+        output.write(f"{c['name']:<15} {c['x']:<10} {c['y']:<10} {c['rot']:<10} {c['part']:<20}\n")
+    return output.getvalue()
 
-st.title("🔄 Convertidor Universal de Archivos SMT")
-st.write("Sube tu archivo **.KYPcb** de KohYoung para generar el archivo **.iss** compatible con Janet.")
+# --- Interfaz Streamlit ---
+st.set_page_config(page_title="Convertidor Universal Dialight", layout="wide")
+st.title("⚙️ Convertidor Universal (KYPcb / TXT) a Janet ISS")
+st.info("Este programa filtra automáticamente los componentes 'FIDU' y genera archivos listos para producción.")
 
-uploaded_file = st.file_uploader("Selecciona el archivo .KYPcb", type=["KYPcb", "xml"])
+uploaded_file = st.file_uploader("Sube tu archivo (.KYPcb o .txt)", type=["KYPcb", "txt", "xml"])
 
-if uploaded_file is not None:
+if uploaded_file:
+    components = []
+    board_info = {'name': uploaded_file.name, 'w': '200', 'h': '200'}
+    content = uploaded_file.read()
+
     try:
-        # Leer el archivo
-        file_bytes = uploaded_file.read()
-        
-        if st.button("Generar archivo .iss"):
-            iss_data = convert_kypcb_to_iss(file_bytes)
+        if uploaded_file.name.lower().endswith(('.kypcb', '.xml')):
+            root = ET.fromstring(content)
+            board_node = root.find('board')
+            if board_node is not None:
+                board_info['w'] = board_node.get('w', '200')
+                board_info['h'] = board_node.get('h', '200')
             
-            # Nombre del archivo de salida basado en el original
-            output_filename = uploaded_file.name.replace(".KYPcb", "").replace(".xml", "") + ".iss"
-            
-            st.success(f"✅ Conversión exitosa para: {uploaded_file.name}")
-            
-            st.download_button(
-                label="📥 Descargar archivo .iss para Janet",
-                data=iss_data,
-                file_name=output_filename,
-                mime="application/octet-stream"
-            )
-            
-    except Exception as e:
-        st.error(f"Hubo un error al procesar el archivo: {e}")
+            raw_comps = root.findall('.//component')
+            for c in raw_comps:
+                components.append({
+                    'name': c.get('name', ''),
+                    'x': c.get('x', '0'),
+                    'y': c.get('y', '0'),
+                    'rot': c.get('rot', '0'),
+                    'part': c.get('part', 'UNKNOWN')
+                })
+        else:
+            # Procesar como TXT
+            components = parse_txt_coordinates(content)
 
-st.divider()
-st.info("Nota: Este programa mapea automáticamente coordenadas X, Y, Rotación y Nombres de componentes.")
+        # APLICAR FILTRO FIDU
+        final_components = clean_placement_data(components)
+        
+        st.success(f"Procesados {len(final_components)} componentes (Se eliminaron {len(components) - len(final_components)} Fiduciales).")
+
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Generar Archivos")
+            if st.button("Preparar Descargas"):
+                iss_file = generate_iss_xml(final_components, board_info)
+                report_file = generate_txt_report(final_components, board_info)
+                
+                st.download_button("📥 Descargar Archivo .ISS", data=iss_file, 
+                                   file_name=uploaded_file.name.rsplit('.', 1)[0] + ".iss")
+                
+                st.download_button("📥 Descargar Reporte .TXT (Para Imprimir)", data=report_file, 
+                                   file_name="Reporte_Montaje_" + uploaded_file.name.rsplit('.', 1)[0] + ".txt")
+
+        with col2:
+            st.subheader("Vista Previa")
+            st.dataframe(final_components, height=300)
+
+    except Exception as e:
+        st.error(f"Error al procesar el archivo: {e}")
