@@ -9,26 +9,24 @@ def clean_placement_data(components):
     return [c for c in components if "FIDU" not in c['name'].upper()]
 
 def parse_txt_coordinates(content):
-    """
-    Parsear un archivo TXT de coordenadas. 
-    Espera: Designador, X, Y, Ángulo, Parte
-    """
+    """Parsear archivo TXT: Nombre Parte X Y Rot"""
     components = []
     lines = content.decode('utf-8').splitlines()
     for line in lines:
         parts = re.split(r'\s+|,\s*', line.strip())
         if len(parts) >= 4:
             try:
+                # Intenta identificar si los valores X, Y son numéricos
                 name = parts[0]
-                x = parts[1]
-                y = parts[2]
-                rot = parts[3]
-                part = parts[4] if len(parts) > 4 else "UNKNOWN"
+                part = parts[1] if len(parts) > 4 else "UNKNOWN"
+                x = parts[2] if len(parts) > 4 else parts[1]
+                y = parts[3] if len(parts) > 4 else parts[2]
+                rot = parts[4] if len(parts) > 4 else parts[3]
                 
                 float(x)
                 float(y)
                 
-                components.append({'name': name, 'x': x, 'y': y, 'rot': rot, 'part': part})
+                components.append({'name': name, 'part': part, 'x': x, 'y': y, 'rot': rot})
             except ValueError:
                 continue 
     return components
@@ -62,16 +60,13 @@ def generate_iss_xml(components, board_info):
     output_tree.write(buffer, encoding="utf-8", xml_declaration=True)
     return buffer.getvalue()
 
-def generate_txt_report(components, board_info):
+def generate_txt_clean(components):
+    """Genera TXT sin encabezado: Name, Part, X, Y, Rot"""
     output = io.StringIO()
-    output.write(f"REPORTE DE MONTAJE - JANET\n")
-    output.write(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-    output.write(f"Placa: {board_info.get('name', 'N/A')}\n")
-    output.write("-" * 60 + "\n")
-    output.write(f"{'Designator':<15} {'X':<10} {'Y':<10} {'Rot':<10} {'Part':<20}\n")
-    output.write("-" * 60 + "\n")
     for c in components:
-        output.write(f"{c['name']:<15} {c['x']:<10} {c['y']:<10} {c['rot']:<10} {c['part']:<20}\n")
+        # Formato: Nombre Part X Y Rot
+        line = f"{c['name']} {c['part']} {c['x']} {c['y']} {c['rot']}\n"
+        output.write(line)
     return output.getvalue()
 
 # --- Interfaz Streamlit ---
@@ -97,15 +92,15 @@ if uploaded_file:
             for c in raw_comps:
                 components.append({
                     'name': c.get('name', ''),
+                    'part': c.get('part', 'UNKNOWN'),
                     'x': c.get('x', '0'),
                     'y': c.get('y', '0'),
-                    'rot': c.get('rot', '0'),
-                    'part': c.get('part', 'UNKNOWN')
+                    'rot': c.get('rot', '0')
                 })
         else:
             components = parse_txt_coordinates(content)
 
-        # Aplicar filtro de Fiduciales internamente
+        # Aplicar filtro de Fiduciales
         final_components = clean_placement_data(components)
         
         st.success(f"Procesados {len(final_components)} componentes.")
@@ -116,16 +111,16 @@ if uploaded_file:
             st.subheader("Generar Archivos")
             if st.button("Preparar Descargas"):
                 iss_file = generate_iss_xml(final_components, board_info)
-                report_file = generate_txt_report(final_components, board_info)
+                txt_data = generate_txt_clean(final_components)
                 
                 st.download_button("📥 Descargar Archivo .ISS", data=iss_file, 
                                    file_name=uploaded_file.name.rsplit('.', 1)[0] + ".iss")
                 
-                st.download_button("📥 Descargar Reporte .TXT", data=report_file, 
-                                   file_name="Reporte_" + uploaded_file.name.rsplit('.', 1)[0] + ".txt")
+                st.download_button("📥 Descargar Archivo .TXT", data=txt_data, 
+                                   file_name="Coordenadas_" + uploaded_file.name.rsplit('.', 1)[0] + ".txt")
 
         with col2:
-            st.subheader("Vista Previa")
+            st.subheader("Vista Previa (Sin Fiduciales)")
             st.dataframe(final_components, height=400)
 
     except Exception as e:
