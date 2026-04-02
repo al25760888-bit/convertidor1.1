@@ -1,116 +1,111 @@
 import streamlit as st
-import xml.etree.ElementTree as ET
 from datetime import datetime
 import io
 
-def procesar_pcb(xml_content):
-    # Cargar el contenido XML
-    root = ET.fromstring(xml_content)
+def formatear_iss_exacto(nombre_pwb, ancho, alto, componentes):
+    """Genera el XML con la sintaxis exacta de los archivos de Dialight."""
+    ahora = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    
+    # Encabezado idéntico a tus muestras
+    xml_header = f"""<?xml version="1.0" encoding="utf-8"?>
+<productionProgram>
+  <headerData>
+    <targetMachine>ISS</targetMachine>
+    <targetVersion revision="15" version="3" level="0" />
+    <programMode>0</programMode>
+    <editMachine>ISS</editMachine>
+    <editVersion revision="10" version="0" level="0" />
+    <lastEdit>{ahora}</lastEdit>
+    <lastOptimized>{ahora}</lastOptimized>
+    <lineConfiguration>
+      <lineName id="2">Line 2</lineName>
+      <configuration>
+        <machine no="1">
+          <typeCode>3020VA</typeCode>
+          <subTypeId>75</subTypeId>
+          <name>3020VAL</name>
+          <typeName />
+          <conveyorLane>SINGLE</conveyorLane>
+          <relationStringUse>1</relationStringUse>
+          <machineRelationString />
+          <stationUnit id="1">
+            <bankUnit kind="1" position="1" drivingType="1" bankOption="1" attributeIndex="1" />
+            <bankUnit kind="2" position="1" drivingType="1" bankOption="1" attributeIndex="1" />
+          </stationUnit>
+        </machine>
+      </configuration>
+    </lineConfiguration>
+  </headerData>
+  <core>
+    <pwbData>
+      <pwb>
+        <pwbId>{nombre_pwb}</pwbId>
+        <outline x="{ancho}" y="{alto}" />
+      </pwb>
+    </pwbData>
+    <placementData>"""
+
+    # Generación de items de componentes
+    items_xml = ""
+    for i, c in enumerate(componentes, 1):
+        items_xml += f"""
+      <item no="{i}">
+        <placementId>{c['id']}</placementId>
+        <componentName>{c['part']}</componentName>
+        <x>{c['x']}</x>
+        <y>{c['y']}</y>
+        <angle>{c['rot']}</angle>
+        <machineNo>1</machineNo>
+        <headNo>1</headNo>
+        <nozzleType>110</nozzleType>
+        <feederNo>{(i % 40) + 1}</feederNo>
+        <supplySide>LF</supplySide>
+      </item>"""
+
+    # Cierre del archivo
+    xml_footer = """
+    </placementData>
+  </core>
+</productionProgram>"""
+
+    return xml_header + items_xml + xml_footer
+
+def procesar_archivo(content):
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(content)
     board = root.find('board')
-    board_name = board.get('name') if board is not None else "Unknown_PCB"
-    width = board.get('w') if board is not None else "0"
-    height = board.get('h') if board is not None else "0"
     
-    componentes_reales = []
-    fiduciales = []
+    comp_reales = []
+    fidus = []
     
-    # 1. Clasificación: Componentes vs Fiduciales
     for comp in root.findall('.//component'):
         datos = {
             'id': comp.get('name'),
             'part': comp.get('part'),
             'x': comp.get('x'),
             'y': comp.get('y'),
-            'rot': comp.get('rot').split('.')[0]
+            'rot': str(int(float(comp.get('rot'))))
         }
-        
-        # Filtro de Fiduciales
         if "FID" in datos['id'].upper() or "FID" in datos['part'].upper():
-            fiduciales.append(datos)
+            fidus.append(datos)
         else:
-            componentes_reales.append(datos)
-
-    # --- GENERAR ISS (XML) ---
-    iss_root = ET.Element("productionProgram")
-    header = ET.SubElement(iss_root, "headerData")
-    ET.SubElement(header, "targetMachine").text = "ISS"
-    ET.SubElement(header, "targetVersion", revision="15", version="3", level="0")
-    ET.SubElement(header, "lastEdit").text = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
+            comp_reales.append(datos)
+            
+    iss_final = formatear_iss_exacto(board.get('name'), board.get('w'), board.get('h'), comp_reales)
     
-    line_cfg = ET.SubElement(header, "lineConfiguration")
-    line_name = ET.SubElement(line_cfg, "lineName", id="2")
-    line_name.text = "Line 2"
+    txt_out = "\n".join([f"{c['id']},{c['part']},{c['x']},{c['y']},{c['rot']}" for c in comp_reales])
+    fidu_out = "\n".join([f"{f['id']},{f['part']},{f['x']},{f['y']},{f['rot']}" for f in fidus])
     
-    core = ET.SubElement(iss_root, "core")
-    pwb_data = ET.SubElement(core, "pwbData")
-    pwb = ET.SubElement(pwb_data, "pwb")
-    ET.SubElement(pwb, "pwbId").text = board_name
-    ET.SubElement(pwb, "outline", x=width, y=height)
-    
-    placement = ET.SubElement(core, "placementData")
-    for i, c in enumerate(componentes_reales):
-        item = ET.SubElement(placement, "item", no=str(i+1))
-        ET.SubElement(item, "placementId").text = c['id']
-        ET.SubElement(item, "componentName").text = c['part']
-        ET.SubElement(item, "x").text = c['x']
-        ET.SubElement(item, "y").text = c['y']
-        ET.SubElement(item, "angle").text = c['rot']
-        ET.SubElement(item, "nozzleType").text = "110"
-        ET.SubElement(item, "feederNo").text = str((i % 40) + 1)
-
-    iss_string = ET.tostring(iss_root, encoding='utf-8', method='xml')
-
-    # --- GENERAR TXT (DATOS LIMPIOS) ---
-    txt_output = io.StringIO()
-    for c in componentes_reales:
-        txt_output.write(f"{c['id']},{c['part']},{c['x']},{c['y']},{c['rot']}\n")
-    
-    # --- GENERAR FIDU ---
-    fidu_output = io.StringIO()
-    for f in fiduciales:
-        fidu_output.write(f"{f['id']},{f['part']},{f['x']},{f['y']},{f['rot']}\n")
-
-    return iss_string, txt_output.getvalue(), fidu_output.getvalue()
+    return iss_final, txt_out, fidu_out
 
 # --- INTERFAZ STREAMLIT ---
-st.set_page_config(page_title="Convertidor ISS Dialight", page_icon="⚙️")
-st.title("⚙️ Convertidor KYPcb a ISS (Janet)")
-st.write("Sube tu archivo Koh Young para generar los formatos necesarios.")
+st.title("Generador ISS Universal (Sintaxis Real)")
 
-uploaded_file = st.file_uploader("Elige un archivo .KYPcb", type="KYPcb")
+archivo = st.file_uploader("Sube tu archivo .KYPcb", type=["KYPcb"])
 
-if uploaded_file is not None:
-    content = uploaded_file.read()
-    iss_file, txt_file, fidu_file = procesar_pcb(content)
+if archivo:
+    iss_content, txt_content, fidu_content = procesar_archivo(archivo.read())
     
-    st.success("¡Archivo procesado con éxito!")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.download_button(
-            label="Descargar .ISS",
-            data=iss_file,
-            file_name=uploaded_file.name.replace(".KYPcb", ".iss"),
-            mime="application/xml"
-        )
-    
-    with col2:
-        st.download_button(
-            label="Descargar DATOS .TXT",
-            data=txt_file,
-            file_name=uploaded_file.name.replace(".KYPcb", "_DATOS.txt"),
-            mime="text/plain"
-        )
-        
-    with col3:
-        st.download_button(
-            label="Descargar FIDU .TXT",
-            data=fidu_file,
-            file_name=uploaded_file.name.replace(".KYPcb", "_FIDU.txt"),
-            mime="text/plain"
-        )
-
-    st.divider()
-    st.subheader("Previsualización de Componentes")
-    st.text(txt_file[:500] + "...")
+    st.download_button("Descargar .ISS (Sintaxis Dialight)", iss_content, file_name="PROGRAMA_OK.iss")
+    st.download_button("Descargar DATOS .TXT (Sin encabezado)", txt_content, file_name="DATOS.txt")
+    st.download_button("Descargar FIDUCIALES .TXT", fidu_content, file_name="FIDUS.txt")
