@@ -2,12 +2,12 @@ import streamlit as st
 from datetime import datetime
 import io
 
-def formatear_iss_exacto(nombre_pwb, ancho, alto, componentes):
-    """Genera el XML con la sintaxis exacta de los archivos de Dialight."""
+def generar_iss_identico(nombre_pwb, ancho, alto, componentes):
     ahora = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    total_comp = len(componentes)
     
-    # Encabezado idéntico a tus muestras
-    xml_header = f"""<?xml version="1.0" encoding="utf-8"?>
+    # ESTRUCTURA EXACTA BASADA EN TUS ARCHIVOS ORIGINALES
+    xml_content = f"""<?xml version="1.0" encoding="utf-8"?>
 <productionProgram>
   <headerData>
     <targetMachine>ISS</targetMachine>
@@ -35,20 +35,24 @@ def formatear_iss_exacto(nombre_pwb, ancho, alto, componentes):
         </machine>
       </configuration>
     </lineConfiguration>
+    <headPlacement total="{total_comp}" completion="0" />
   </headerData>
   <core>
     <pwbData>
       <pwb>
         <pwbId>{nombre_pwb}</pwbId>
         <outline x="{ancho}" y="{alto}" />
+        <origin x="0" y="0" />
+        <posOffset x="0" y="0" />
+        <angle>0</angle>
+        <fIdMarkUse>0</fIdMarkUse>
+        <badMarkUse>0</badMarkUse>
       </pwb>
     </pwbData>
     <placementData>"""
 
-    # Generación de items de componentes
-    items_xml = ""
     for i, c in enumerate(componentes, 1):
-        items_xml += f"""
+        xml_content += f"""
       <item no="{i}">
         <placementId>{c['id']}</placementId>
         <componentName>{c['part']}</componentName>
@@ -58,54 +62,69 @@ def formatear_iss_exacto(nombre_pwb, ancho, alto, componentes):
         <machineNo>1</machineNo>
         <headNo>1</headNo>
         <nozzleType>110</nozzleType>
-        <feederNo>{(i % 40) + 1}</feederNo>
+        <feederNo>{(i % 50) + 1}</feederNo>
         <supplySide>LF</supplySide>
+        <headPlacement total="1" completion="0" />
       </item>"""
 
-    # Cierre del archivo
-    xml_footer = """
+    xml_content += """
     </placementData>
+    <componentData />
+    <feederSetup>
+      <machine no="1">"""
+
+    # Bloque de Feeders con contadores de error en cero (Requerido por Janet)
+    for i in range(1, 51):
+        xml_content += f"""
+        <feeder no="{i}">
+          <supplySide>LF</supplySide>
+          <numberOfError>
+            <pick success="0" error="0" retryOver="0" />
+            <place success="0" />
+            <compo error="0" scrap="0" angle="0" takeOut="0" fall="0" />
+            <dimension error="0" />
+            <laser error="0" />
+            <vision error="0" />
+            <copla error="0" />
+            <colinearity error="0" />
+            <verify error="0" />
+            <tombstone error="0" />
+            <leadBend error="0" />
+            <pickPos error="0" />
+            <posture error="0" />
+            <other error="0" />
+          </numberOfError>
+        </feeder>"""
+
+    xml_content += """
+      </machine>
+    </feederSetup>
   </core>
 </productionProgram>"""
+    return xml_content
 
-    return xml_header + items_xml + xml_footer
-
-def procesar_archivo(content):
+def extraer_datos(xml_content):
     import xml.etree.ElementTree as ET
-    root = ET.fromstring(content)
+    root = ET.fromstring(xml_content)
     board = root.find('board')
-    
-    comp_reales = []
-    fidus = []
-    
+    comp_reales, fidus = [], []
     for comp in root.findall('.//component'):
-        datos = {
-            'id': comp.get('name'),
-            'part': comp.get('part'),
-            'x': comp.get('x'),
-            'y': comp.get('y'),
-            'rot': str(int(float(comp.get('rot'))))
-        }
-        if "FID" in datos['id'].upper() or "FID" in datos['part'].upper():
-            fidus.append(datos)
-        else:
-            comp_reales.append(datos)
-            
-    iss_final = formatear_iss_exacto(board.get('name'), board.get('w'), board.get('h'), comp_reales)
-    
-    txt_out = "\n".join([f"{c['id']},{c['part']},{c['x']},{c['y']},{c['rot']}" for c in comp_reales])
-    fidu_out = "\n".join([f"{f['id']},{f['part']},{f['x']},{f['y']},{f['rot']}" for f in fidus])
-    
-    return iss_final, txt_out, fidu_out
+        d = {'id': comp.get('name'), 'part': comp.get('part'), 'x': comp.get('x'), 'y': comp.get('y'), 'rot': str(int(float(comp.get('rot'))))}
+        if "FID" in d['id'].upper() or "FID" in d['part'].upper(): fidus.append(d)
+        else: comp_reales.append(d)
+    return board, comp_reales, fidus
 
-# --- INTERFAZ STREAMLIT ---
-st.title("Generador ISS Universal (Sintaxis Real)")
+# --- INTERFAZ ---
+st.title("Generador ISS Dialight (Identidad Total)")
+file = st.file_uploader("Archivo .KYPcb", type=["KYPcb"])
 
-archivo = st.file_uploader("Sube tu archivo .KYPcb", type=["KYPcb"])
-
-if archivo:
-    iss_content, txt_content, fidu_content = procesar_archivo(archivo.read())
+if file:
+    board, componentes, fidus = extraer_datos(file.read())
+    iss_final = generar_iss_identico(board.get('name'), board.get('w'), board.get('h'), componentes)
     
-    st.download_button("Descargar .ISS (Sintaxis Dialight)", iss_content, file_name="PROGRAMA_OK.iss")
-    st.download_button("Descargar DATOS .TXT (Sin encabezado)", txt_content, file_name="DATOS.txt")
-    st.download_button("Descargar FIDUCIALES .TXT", fidu_content, file_name="FIDUS.txt")
+    txt_datos = "\n".join([f"{c['id']},{c['part']},{c['x']},{c['y']},{c['rot']}" for c in componentes])
+    txt_fidu = "\n".join([f"{f['id']},{f['part']},{f['x']},{f['y']},{f['rot']}" for f in fidus])
+
+    st.download_button("Descargar .ISS Idéntico", iss_final, file_name="PROGRAMA_GENERADO.iss")
+    st.download_button("Descargar DATOS .TXT", txt_datos, file_name="DATOS_LIMPIOS.txt")
+    st.download_button("Descargar FIDU .TXT", txt_fidu, file_name="FIDUCIALES.txt")
